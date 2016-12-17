@@ -45,12 +45,7 @@ public class RDNodeResource extends CoapResource {
 
     private static final Logger LOGGER = Logger.getLogger(RDNodeResource.class.getCanonicalName());
 
-    /*
-	 * After the lifetime expires, the endpoint has RD_VALIDATION_TIMEOUT seconds
-	 * to update its entry before the RD enforces validation and removes the endpoint
-	 * if it does not respond.
-     */
-    private static ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(//
+    private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
             new Utils.DaemonThreadFactory("RDLifeTime#"));
 
     private int lifeTime = 86400;
@@ -61,18 +56,84 @@ public class RDNodeResource extends CoapResource {
     private String endpointType = "";
     private ScheduledFuture<?> ltExpiryFuture;
 
-    public RDNodeResource(String ep, String domain) {
-        super(ep);
+    public RDNodeResource(String endpointName, String domain)
+            throws IllegalArgumentException {
 
-        // check length restriction, but tolerantly accept
-        int epLength = ep.getBytes(CoAP.UTF8_CHARSET).length;
-        if (epLength > 63) {
+        this(endpointName, domain, endpointName);
+    }
+
+    public RDNodeResource(String endpointName, String domain, String location)
+            throws IllegalArgumentException {
+
+        super(location);
+
+        // Check length Restrictions
+        int endpointNameLength = endpointName.getBytes(CoAP.UTF8_CHARSET).length;
+        if (endpointNameLength > 63) {
             LOGGER.log(Level.WARNING, "Endpoint Name '{0}' too long ({1} bytes)",
-                    new Object[]{ep, epLength});
+                    new Object[]{endpointName, endpointNameLength});
+
+            throw new IllegalArgumentException("Endpoint Name > 63 bytes");
         }
 
-        this.endpointName = ep;
+        this.endpointName = endpointName;
         this.domain = domain;
+    }
+
+    @Override
+    public void delete() {
+
+        LOGGER.log(Level.INFO, "Removing endpoint: {0}", getContext());
+
+        if (ltExpiryFuture != null) {
+            // delete may be called from within the future
+            ltExpiryFuture.cancel(false);
+        }
+
+        super.delete();
+    }
+
+    /*
+    6.6. Read Endpoint Links
+        Some endpoints may wish to manage their links as a collection, and
+        may need to read the current set of links in order to determine link
+        maintenance operations.
+    
+        One or more links MAY be selected by using query filtering as
+        specified in [RFC6690] Section 4.1
+    
+        The read request interface is specified as follows:
+        Interaction: EP -> RD
+        Method: GET
+        URI Template: /{+location}{?href,rel,rt,if,ct}
+        URI Template Variables:
+    
+        location := This is the Location path returned by the RD as a
+        result of a successful earlier registration.
+    
+        href,rel,rt,if,ct := link relations and attributes specified in
+        the query in order to select particular links based on their
+        relations and attributes. "href" denotes the URI target of the
+        link. See [RFC6690] Sec. 4.1
+    
+        The following responses codes are defined for this interface:
+    
+        Success: 2.05 "Content" or 200 "OK" upon success with an
+        "application/link-format", "application/link-format+cbor", or
+        "application/link-format+json" payload.
+    
+        Failure: 4.00 "Bad Request" or 400 "Bad Request". Malformed
+        request.
+    
+        Failure: 4.04 "Not Found" or 404 "Not Found". Registration does not
+        exist (e.g. may have expired).
+    
+        Failure: 5.03 "Service Unavailable" or 503 "Service Unavailable".
+        Service could not perform the operation.
+     */
+    @Override
+    public void handleGET(CoapExchange exchange) {
+
     }
 
     /*
@@ -105,15 +166,79 @@ public class RDNodeResource extends CoapResource {
         In addition to the use of POST, as described in this section, there
         is an alternate way to add, replace, and delete links using PATCH as
         described in Section 6.7.
+    
+        Content-Format: application/link-format (mandatory)
+        Content-Format: application/link-format+json (optional)
+        Content-Format: application/link-format+cbor (optional)
+    
+        The following response codes are defined for this interface:
+    
+        Success: 2.04 "Changed" or 204 "No Content" if the update was
+        successfully processed.
+    
+        Failure: 4.00 "Bad Request" or 400 "Bad Request". Malformed
+        request.
+    
+        Failure: 4.04 "Not Found" or 404 "Not Found". Registration does not
+        exist (e.g. may have expired).
+    
+        Failure: 5.03 "Service Unavailable" or 503 "Service Unavailable".
+        Service could not perform the operation.
      */
-    /**
-     * Updates the endpoint parameters from POST and PUT requests.
-     *
-     * @param request A POST or PUT request with a {?et,lt,con} URI Template
-     * query and a Link Format payload.
-     *
+    @Override
+    public void handlePOST(CoapExchange exchange) {
+        LOGGER.log(Level.INFO, "Updating endpoint: {0}", getContext());
+
+        try {
+            this.setParameters(exchange.advanced().getRequest());
+        } catch (IllegalArgumentException ex) {
+            exchange.respond(ResponseCode.BAD_REQUEST, ex.getMessage());
+            return;
+        }
+
+        // TODO: Add / Replace Resources
+        // complete the request
+        exchange.respond(ResponseCode.CHANGED);
+    }
+
+    /*
+    6.5. Registration Removal
+        Although RD entries have soft state and will eventually timeout after
+        their lifetime, an endpoint SHOULD explicitly remove its entry from
+        the RD if it knows it will no longer be available (for example on
+        shut-down). This is accomplished using a removal interface on the RD
+        by performing a DELETE on the endpoint resource.
+    
+        The removal request interface is specified as follows:
+        Interaction: EP -> RD
+        Method: DELETE
+        URI Template: /{+location}
+        URI Template Variables:
+   
+        location := This is the Location path returned by the RD as a
+        result of a successful earlier registration.
+    
+        The following responses codes are defined for this interface:
+    
+        Success: 2.02 "Deleted" or 204 "No Content" upon successful deletion
+    
+        Failure: 4.00 "Bad Request" or 400 "Bad request". Malformed
+        request.
+    
+        Failure: 4.04 "Not Found" or 404 "Not Found". Registration does not
+        exist (e.g. may have expired).
+    
+        Failure: 5.03 "Service Unavailable" or 503 "Service Unavailable".
+        Service could not perform the operation.
      */
-    public boolean setParameters(Request request) {
+    @Override
+    public void handleDELETE(CoapExchange exchange) {
+        delete();
+        exchange.respond(ResponseCode.DELETED);
+    }
+
+    public void setParameters(Request request)
+            throws IllegalArgumentException {
 
         // Parse Queries
         QueryList queryList = QueryList.parse(request.getOptions().getUriQuery());
@@ -134,8 +259,7 @@ public class RDNodeResource extends CoapResource {
                 this.setLifeTime(newLifeTime);
 
             } catch (NumberFormatException ex) {
-                // Wrong formatted Params
-                return false;
+                throw new IllegalArgumentException("Lifetime has wrong NumberFormat (?lt)");
             }
         }
 
@@ -143,21 +267,21 @@ public class RDNodeResource extends CoapResource {
         if (this.context == null || queryContext != null) {
             try {
                 this.setContextFromRequest(request, queryContext);
-            } catch (Exception e) {
+            } catch (URISyntaxException e) {
                 LOGGER.log(Level.WARNING,
                         "Invalid context '{0}' from {1}:{2}  : {3}",
                         new Object[]{queryContext,
                             request.getSource().getHostAddress(),
                             request.getSourcePort(), e});
 
-                return false;
+                throw new IllegalArgumentException("Context has invalid URISyntax (?con)");
             }
         }
 
         // Reset Lifetime counter
         this.setLifeTime(newLifeTime);
 
-        return updateEndpointResources(request.getPayloadString());
+        this.updateEndpointResources(request.getPayloadString());
     }
 
     private void setContextFromRequest(Request request, String queryContext)
@@ -181,16 +305,16 @@ public class RDNodeResource extends CoapResource {
             /* In the absence of this parameter the
                scheme of the protocol, source IP address and source port of
                the register request are assumed. */
-                
+
             scheme = request.getScheme();
             host = request.getSource().getHostAddress();
             port = request.getSourcePort();
-            
+
             // Do we have no Scheme from Request ?		
             if (scheme == null || scheme.isEmpty()) {  // issue #38 & pr #42
                 // Assume default Scheme
                 scheme = CoAP.COAP_URI_SCHEME;
-                
+
                 // Do we have secure CoAP enabled ?
                 OptionSet reqOptions = request.getOptions();
                 if (reqOptions.hasUriPort()
@@ -210,110 +334,42 @@ public class RDNodeResource extends CoapResource {
     }
 
     /*
-	 * add a new resource to the node. E.g. the resource temperature or
-	 * humidity. If the path is /readings/temp, temp will be a subResource
-	 * of readings, which is a subResource of the node.
+    * add a new resource to the node. E.g. the resource temperature or
+    * humidity. If the path is /readings/temp, temp will be a subResource
+    * of readings, which is a subResource of the node.
      */
-    public CoapResource addNodeResource(String path) {
+    public CoapResource addNodeResource(WebLink link) {
+        String path = link.getURI().substring(link.getURI().indexOf("/"));
+
         Scanner scanner = new Scanner(path);
         scanner.useDelimiter("/");
-        String next = "";
-        boolean resourceExist = false;
-        Resource resource = this; // It's the resource that represents the endpoint
 
+        // We start with this Instace as first Parent of the Tree
+        Resource parent = this;
+
+        String subPath = null;
         CoapResource subResource = null;
         while (scanner.hasNext()) {
-            resourceExist = false;
-            next = scanner.next();
-            for (Resource res : resource.getChildren()) {
-                if (res.getName().equals(next)) {
+            boolean resourceExist = false;
+            subPath = scanner.next();
+            for (Resource res : parent.getChildren()) {
+                if (res.getName().equals(subPath)) {
                     subResource = (CoapResource) res;
                     resourceExist = true;
                 }
             }
             if (!resourceExist) {
-                subResource = new RDTagResource(next, true, this);
-                resource.add(subResource);
+                subResource = new RDTagResource(subPath, true, this);
+                parent.add(subResource);
             }
-            resource = subResource;
+            parent = subResource;
         }
-        subResource.setPath(resource.getPath());
-        subResource.setName(next);
         scanner.close();
+
+        subResource.setPath(parent.getPath());
+        subResource.setName(subPath);
+
         return subResource;
-    }
-
-    @Override
-    public void delete() {
-
-        LOGGER.log(Level.INFO, "Removing endpoint: {0}", getContext());
-
-        if (ltExpiryFuture != null) {
-            // delete may be called from within the future
-            ltExpiryFuture.cancel(false);
-        }
-
-        super.delete();
-    }
-
-    /*
-	 * GET only debug return endpoint identifier
-     */
-    @Override
-    public void handleGET(CoapExchange exchange) {
-        exchange.respond(ResponseCode.FORBIDDEN, "RD update handle");
-    }
-
-    /*
-	 * PUTs content to this resource. PUT is a periodic request from the
-	 * node to update the lifetime.
-     */
-    @Override
-    public void handlePOST(CoapExchange exchange) {
-        LOGGER.log(Level.INFO, "Updating endpoint: {0}", getContext());
-        
-        // TODO CHANGE RETURN TYPE !
-        if (!setParameters(exchange.advanced().getRequest())) {
-            
-        }
-
-        // reset lifetime
-        setLifeTime();
-
-        // complete the request
-        exchange.respond(ResponseCode.CHANGED);
-
-    }
-
-    /*
-	 * DELETEs this node resource
-     */
-    @Override
-    public void handleDELETE(CoapExchange exchange) {
-        delete();
-        exchange.respond(ResponseCode.DELETED);
-    }
-
-    public void setLifeTime() {
-        this.setLifeTime(null);
-    }
-    
-    public void setLifeTime(Integer newLifeTime ) {
-        if (newLifeTime != null) {
-            this.lifeTime = newLifeTime;
-        }
-
-        if (ltExpiryFuture != null) {
-            ltExpiryFuture.cancel(true);
-        }
-
-        ltExpiryFuture = scheduler.schedule(new Runnable() {
-            @Override
-            public void run() {
-                delete();
-            }
-        }, this.lifeTime, TimeUnit.SECONDS);
-
     }
 
     /**
@@ -327,7 +383,7 @@ public class RDNodeResource extends CoapResource {
 
         for (WebLink l : links) {
 
-            CoapResource resource = addNodeResource(l.getURI().substring(l.getURI().indexOf("/")));
+            CoapResource resource = addNodeResource(l);
 
             // clear attributes to make registration idempotent
             for (String attribute : resource.getAttributes().getAttributeKeySet()) {
@@ -386,7 +442,7 @@ public class RDNodeResource extends CoapResource {
     }
 
     /*
-	 * Setter And Getter
+    * Setter And Getter
      */
     public String getEndpointName() {
         return endpointName;
@@ -412,6 +468,27 @@ public class RDNodeResource extends CoapResource {
         this.context = context;
     }
 
+    public void setLifeTime() {
+        this.setLifeTime(null);
+    }
+
+    public void setLifeTime(Integer newLifeTime) {
+        if (newLifeTime != null) {
+            this.lifeTime = newLifeTime;
+        }
+
+        if (ltExpiryFuture != null) {
+            ltExpiryFuture.cancel(true);
+        }
+
+        ltExpiryFuture = scheduler.schedule(new Runnable() {
+            @Override
+            public void run() {
+                delete();
+            }
+        }, this.lifeTime, TimeUnit.SECONDS);
+    }
+
     class ExpiryTask extends TimerTask {
 
         RDNodeResource resource;
@@ -427,5 +504,4 @@ public class RDNodeResource extends CoapResource {
             this.resource.delete();
         }
     }
-
 }
