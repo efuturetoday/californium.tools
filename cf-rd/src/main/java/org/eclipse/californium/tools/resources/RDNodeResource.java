@@ -36,6 +36,7 @@ import org.eclipse.californium.core.WebLink;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.coap.LinkFormat;
+import org.eclipse.californium.core.coap.OptionSet;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
@@ -74,6 +75,37 @@ public class RDNodeResource extends CoapResource {
         this.domain = domain;
     }
 
+    /*
+    6.4. Registration Update
+        The update interface is used by an endpoint to refresh or update its
+        registration with an RD. To use the interface, the endpoint sends a
+        POST request to the resource returned in the Location option in the
+        response to the first registration.
+    
+        An update MAY update the lifetime or context registration parameters
+        "lt", "con" as in Section 6.3 ) if they have changed since the last
+        registration or update. Parameters that have not changed SHOULD NOT
+        be included in an update. Adding parameters that have not changed
+        increases the size of the message but does not have any other
+        implications. Parameters MUST be included as query parameters in an
+        update operation as in {registration}.
+    
+        Upon receiving an update request, an RD MUST reset the timeout for
+        that endpoint and update the scheme, IP address and port of the
+        endpoint, using the source address of the update, or the context
+        ("con") parameter if present. If the lifetime parameter "lt" is
+        included in the received update request, the RD MUST update the
+        lifetime of the registration and set the timeout equal to the new
+        lifetime.
+    
+        An update MAY optionally add or replace links for the endpoint by
+        including those links in the payload of the update as a CoRE Link
+        Format document. A link is replaced only if both the target URI and
+        relation type match.
+        In addition to the use of POST, as described in this section, there
+        is an alternate way to add, replace, and delete links using PATCH as
+        described in Section 6.7.
+     */
     /**
      * Updates the endpoint parameters from POST and PUT requests.
      *
@@ -83,39 +115,38 @@ public class RDNodeResource extends CoapResource {
      */
     public boolean setParameters(Request request) {
 
-        boolean contextUpdated = false;
-        String newContext = "";
+        // Parse Queries
+        QueryList queryList = QueryList.parse(request.getOptions().getUriQuery());
 
-        List<String> query = request.getOptions().getUriQuery();
-        for (String q : query) {
+        // Get LifeTime(lt) and Context(con) from Query
+        String queryLifeTime = queryList.get(LinkFormat.LIFE_TIME);
+        String queryContext = queryList.get(LinkFormat.CONTEXT);
 
-            KeyValuePair kvp = KeyValuePair.parse(q);
-
-            if (LinkFormat.END_POINT_TYPE.equals(kvp.getName()) && !kvp.isFlag()) {
-                this.endpointType = kvp.getValue();
-            }
-
-            if (LinkFormat.LIFE_TIME.equals(kvp.getName()) && !kvp.isFlag()) {
-                lifeTime = kvp.getIntValue();
+        // Parse LifeTime when present in Query to Integer
+        Integer newLifeTime = null;
+        if (queryLifeTime != null) {
+            try {
+                newLifeTime = Integer.parseInt(queryLifeTime);
                 if (lifeTime < 60) {
-                    LOGGER.info("Enforcing minimal RD lifetime of 60 seconds (was " + lifeTime + ")");
+                    LOGGER.log(Level.INFO, "Enforcing minimal RD lifetime of 60 seconds (was {0})", this.lifeTime);
                     lifeTime = 60;
                 }
-            }
+                this.setLifeTime(newLifeTime);
 
-            if (LinkFormat.CONTEXT.equals(kvp.getName()) && !kvp.isFlag()) {
-                newContext = kvp.getValue();
-                contextUpdated = true;
+            } catch (NumberFormatException ex) {
+                // Wrong formatted Params
+                return false;
             }
         }
-        // apply context from source address or con variable
-        if (context == null || contextUpdated) {
+
+        // Lazy set Context or update by Query(con)
+        if (this.context == null || queryContext != null) {
             try {
-                setContextFromRequest(request, newContext);
+                this.setContextFromRequest(request, queryContext);
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING,
                         "Invalid context '{0}' from {1}:{2}  : {3}",
-                        new Object[]{newContext,
+                        new Object[]{queryContext,
                             request.getSource().getHostAddress(),
                             request.getSourcePort(), e});
 
@@ -123,56 +154,59 @@ public class RDNodeResource extends CoapResource {
             }
         }
 
-        // set lifetime on first call
-        if (ltExpiryFuture == null) {
-            setLifeTime(lifeTime);
-        }
+        // Reset Lifetime counter
+        this.setLifeTime(newLifeTime);
 
         return updateEndpointResources(request.getPayloadString());
     }
 
-    private void setContextFromRequest(Request request, String newContext)
+    private void setContextFromRequest(Request request, String queryContext)
             throws URISyntaxException {
-        URI check;
-        String scheme, host = null;
-        int port = -1;
 
-        // get the scheme from the request.		
-        scheme = request.getScheme();
-        if (scheme == null || scheme.isEmpty()) {  // issue #38 & pr #42
-            // assume default scheme
-            scheme = CoAP.COAP_URI_SCHEME;
-            // Check if Uri-Port option is set and to default port.
-            if (request.getOptions().getUriPort() != null
-                    && request.getOptions().getUriPort().intValue()
-                    == CoAP.DEFAULT_COAP_SECURE_PORT) {
-                scheme = CoAP.COAP_SECURE_URI_SCHEME;
-            }
-            request.setScheme(scheme);
-        }
+        URI uri;
+        String scheme;
+        String host;
+        Integer port;
 
-        if (!newContext.isEmpty()) {
-            // context from URI template variable
-            check = new URI(newContext);
-            // continue checking as "coap:///" is valid a URI.  
-            scheme = check.getScheme();
-            host = check.getHost();
-            port = check.getPort();
-        }
-        if (scheme == null) { // Should honor request's scheme
+        /* This parameter sets the scheme,
+           address and port at which this server is available in the form
+           scheme://host:port. */
+        if (queryContext != null) {
+            uri = new URI(queryContext);
+
+            scheme = uri.getScheme();
+            host = uri.getHost();
+            port = uri.getPort();
+        } else {
+            /* In the absence of this parameter the
+               scheme of the protocol, source IP address and source port of
+               the register request are assumed. */
+                
             scheme = request.getScheme();
-        }
-        if (host == null) {  // RFC says: use source address when not set
             host = request.getSource().getHostAddress();
-        }
-        if (port < 0) {  // RFC says: use source port when not set
             port = request.getSourcePort();
+            
+            // Do we have no Scheme from Request ?		
+            if (scheme == null || scheme.isEmpty()) {  // issue #38 & pr #42
+                // Assume default Scheme
+                scheme = CoAP.COAP_URI_SCHEME;
+                
+                // Do we have secure CoAP enabled ?
+                OptionSet reqOptions = request.getOptions();
+                if (reqOptions.hasUriPort()
+                        && reqOptions.getUriPort() == CoAP.DEFAULT_COAP_SECURE_PORT) {
+                    scheme = CoAP.COAP_SECURE_URI_SCHEME;
+                }
+
+                // Set the Request Scheme
+                request.setScheme(scheme);
+            }
         }
 
-        // set context from gathered values
-        check = new URI(scheme, null, host, port, null, null, null); // required to set port
+        // Set Context from gathered Values
+        uri = new URI(scheme, null, host, port, null, null, null); // required to set port
         // CoAP context template: coap[s?]://<host>:<port>
-        this.context = check.toString();
+        this.context = uri.toString();
     }
 
     /*
@@ -212,7 +246,7 @@ public class RDNodeResource extends CoapResource {
     @Override
     public void delete() {
 
-        LOGGER.info("Removing endpoint: " + getContext());
+        LOGGER.log(Level.INFO, "Removing endpoint: {0}", getContext());
 
         if (ltExpiryFuture != null) {
             // delete may be called from within the future
@@ -236,17 +270,15 @@ public class RDNodeResource extends CoapResource {
      */
     @Override
     public void handlePOST(CoapExchange exchange) {
-
-        if (ltExpiryFuture != null) {
-            ltExpiryFuture.cancel(true); // try to cancel before delete is called
+        LOGGER.log(Level.INFO, "Updating endpoint: {0}", getContext());
+        
+        // TODO CHANGE RETURN TYPE !
+        if (!setParameters(exchange.advanced().getRequest())) {
+            
         }
 
-        LOGGER.info("Updating endpoint: " + getContext());
-
-        setParameters(exchange.advanced().getRequest());
-
         // reset lifetime
-        setLifeTime(this.lifeTime);
+        setLifeTime();
 
         // complete the request
         exchange.respond(ResponseCode.CHANGED);
@@ -262,13 +294,14 @@ public class RDNodeResource extends CoapResource {
         exchange.respond(ResponseCode.DELETED);
     }
 
-    /*
-	 * set either a new lifetime (for new resources, POST request) or update
-	 * the lifetime (for PUT request)
-     */
-    public void setLifeTime(int newLifeTime) {
-
-        lifeTime = newLifeTime;
+    public void setLifeTime() {
+        this.setLifeTime(null);
+    }
+    
+    public void setLifeTime(Integer newLifeTime ) {
+        if (newLifeTime != null) {
+            this.lifeTime = newLifeTime;
+        }
 
         if (ltExpiryFuture != null) {
             ltExpiryFuture.cancel(true);
@@ -279,8 +312,7 @@ public class RDNodeResource extends CoapResource {
             public void run() {
                 delete();
             }
-        }, lifeTime + 2, // contingency time
-                TimeUnit.SECONDS);
+        }, this.lifeTime, TimeUnit.SECONDS);
 
     }
 
@@ -391,7 +423,8 @@ public class RDNodeResource extends CoapResource {
 
         @Override
         public void run() {
-            delete();
+            LOGGER.log(Level.INFO, "Removing endpoint: {0} due end of life", this.resource.getEndpointName());
+            this.resource.delete();
         }
     }
 

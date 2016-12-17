@@ -17,7 +17,6 @@
  */
 package org.eclipse.californium.tools.resources;
 
-import java.util.List;
 
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.coap.LinkFormat;
@@ -30,10 +29,10 @@ public class RDResource extends CoapResource {
     public RDResource() {
         this("rd");
     }
-
+    
     public RDResource(String resourceIdentifier) {
         super(resourceIdentifier);
-        getAttributes().addResourceType("core.rd");
+        this.getAttributes().addResourceType("core.rd");
     }
 
     /*
@@ -43,45 +42,29 @@ public class RDResource extends CoapResource {
     @Override
     public void handlePOST(CoapExchange exchange) {
 
-        // get name and lifetime from option query
-        String endpointName = "";
-        String domain = "local";
-        RDNodeResource resource = null;
-
         ResponseCode responseCode;
 
         LOGGER.info("Registration request from " + exchange.getSourceAddress().getHostName() + ":" + exchange.getSourcePort());
 
-        List<String> query = exchange.getRequestOptions().getUriQuery();
-        for (String q : query) {
+        // Parse Queries
+        QueryList queryList = QueryList.parse(exchange.getRequestOptions().getUriQuery());
+        
+        // Get Endpoint Name(ep) and Domain(d) from Query
+        String endpointName = queryList.get(LinkFormat.END_POINT);
+        String domain = queryList.getOrDefault(LinkFormat.DOMAIN, "local");
 
-            KeyValuePair kvp = KeyValuePair.parse(q);
-
-            if (LinkFormat.END_POINT.equals(kvp.getName()) && !kvp.isFlag()) {
-                endpointName = kvp.getValue();
-            }
-
-            if (LinkFormat.DOMAIN.equals(kvp.getName()) && !kvp.isFlag()) {
-                domain = kvp.getValue();
-            }
-        }
-
-        // mandatory variables
-        if (endpointName.isEmpty()) {
+        // Check for Mandatory Variables
+        if (endpointName == null) {
             LOGGER.info("Missing Endpoint Name for " + exchange.getSourceAddress().getHostName() + ":" + exchange.getSourcePort());
             exchange.respond(ResponseCode.BAD_REQUEST, "Missing Endpoint Name (?ep)");
             return;
         }
 
-        // find already registered EP
-        for (Resource node : getChildren()) {
-            if (((RDNodeResource) node).getEndpointName().equals(endpointName) && ((RDNodeResource) node).getDomain().equals(domain)) {
-                resource = (RDNodeResource) node;
-            }
-        }
-
+        // Find Endpoint on this RD
+        RDNodeResource resource = this.getEndpoint(endpointName, domain);
+        
+        // Check if Endpoint is already registered with this Directory
         if (resource == null) {
-
             // uncomment to use random resource names instead of registered Endpoint Name
             /*
 			String randomName;
@@ -96,10 +79,10 @@ public class RDResource extends CoapResource {
         } else {
             responseCode = ResponseCode.CHANGED;
         }
-
+        
         // set parameters of resource or abort on failure
         if (!resource.setParameters(exchange.advanced().getRequest())) {
-            resource.delete();
+            resource.delete(); // TODO? DELETE ?!
             exchange.respond(ResponseCode.BAD_REQUEST);
             return;
         }
@@ -111,6 +94,19 @@ public class RDResource extends CoapResource {
 
         // complete the request
         exchange.respond(responseCode);
+    }
+    
+    
+    private RDNodeResource getEndpoint(String endpointName, String domain) {
+        for (Resource child : this.getChildren()) {
+            RDNodeResource childResource = (RDNodeResource) child;
+            if (childResource.getEndpointName().equals(endpointName)
+                    && childResource.getDomain().equals(domain)) {
+                return childResource;
+            }
+        }
+
+        return null;
     }
 
 }
