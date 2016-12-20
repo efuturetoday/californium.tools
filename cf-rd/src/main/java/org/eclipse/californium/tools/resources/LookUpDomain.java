@@ -18,7 +18,6 @@
 package org.eclipse.californium.tools.resources;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.TreeSet;
@@ -30,22 +29,23 @@ import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 
-public class RDLookUpEPResource extends CoapResource {
+public class LookUpDomain extends CoapResource {
 
-    private RDResource rdResource = null;
+    private ResourceDirecory rdResource = null;
 
-    public RDLookUpEPResource(String resourceIdentifier, RDResource rd) {
+    public LookUpDomain(String resourceIdentifier, ResourceDirecory rd) {
         super(resourceIdentifier);
         this.rdResource = rd;
     }
 
     @Override
     public void handleGET(CoapExchange exchange) {
+
         Collection<Resource> resources = rdResource.getChildren();
+        TreeSet<String> availableDomains = new TreeSet<String>();
+        String domainQuery = null;
+        Iterator<Resource> resIt = resources.iterator();
         String result = "";
-        String domainQuery = "";
-        String endpointQuery = "";
-        TreeSet<String> endpointTypeQuery = new TreeSet<String>();
 
         List<String> query = exchange.getRequestOptions().getUriQuery();
         for (String q : query) {
@@ -54,40 +54,28 @@ public class RDLookUpEPResource extends CoapResource {
             if (LinkFormat.DOMAIN.equals(kvp.getName())) {
                 domainQuery = kvp.getValue();
             }
-
-            if (LinkFormat.END_POINT.equals(kvp.getName())) {
-                endpointQuery = kvp.getValue();
-            }
-
-            if (LinkFormat.END_POINT_TYPE.equals(kvp.getName())) {
-                Collections.addAll(endpointTypeQuery, kvp.getValue().split(" "));
-            }
         }
-
-        Iterator<Resource> resIt = resources.iterator();
 
         while (resIt.hasNext()) {
             Resource res = resIt.next();
-            if (res instanceof RDNodeResource) {
-                RDNodeResource node = (RDNodeResource) res;
-                if ((domainQuery.isEmpty() || domainQuery.equals(node.getDomain()))
-                        && (endpointQuery.isEmpty() || endpointQuery.equals(node.getEndpointName()))
-                        && (endpointTypeQuery.isEmpty() || endpointTypeQuery.contains(node.getEndpointType()))) {
-
-                    result += "<" + node.getContext() + ">;" + LinkFormat.END_POINT + "=\"" + node.getEndpointName() + "\"";
-                    result += ";" + LinkFormat.DOMAIN + "=\"" + node.getDomain() + "\"";
-                    if (!node.getEndpointType().isEmpty()) {
-                        result += ";" + LinkFormat.RESOURCE_TYPE + "=\"" + node.getEndpointType() + "\"";
-                    }
-
-                    result += ",";
+            if (res instanceof Endpoint) {
+                Endpoint node = (Endpoint) res;
+                if (domainQuery == null || domainQuery.equals(node.getDomain())) {
+                    availableDomains.add(node.getDomain());
                 }
             }
         }
 
-        if (result.isEmpty()) {
+        if (availableDomains.isEmpty()) {
             exchange.respond(ResponseCode.NOT_FOUND);
         } else {
+            Iterator<String> domIt = availableDomains.iterator();
+
+            while (domIt.hasNext()) {
+                String dom = domIt.next();
+                result += "</rd>;" + LinkFormat.DOMAIN + "=\"" + dom + "\",";
+            }
+
             // also remove trailing comma
             exchange.respond(ResponseCode.CONTENT, result.substring(0, result.length() - 1), MediaTypeRegistry.APPLICATION_LINK_FORMAT);
         }

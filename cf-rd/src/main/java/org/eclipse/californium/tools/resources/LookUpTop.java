@@ -19,18 +19,18 @@ package org.eclipse.californium.tools.resources;
 
 import org.eclipse.californium.core.CoapResource;
 
-public class RDLookUpTopResource extends CoapResource {
+public class LookUpTop extends CoapResource {
 
-    public RDLookUpTopResource(RDResource rd) {
+    public LookUpTop(ResourceDirecory rd) {
         this("rd-lookup", rd);
     }
 
-    public RDLookUpTopResource(String resourceIdentifier, RDResource rd) {
+    public LookUpTop(String resourceIdentifier, ResourceDirecory rd) {
         super(resourceIdentifier);
 
         getAttributes().addResourceType("core.rd-lookup");
-        add(new RDLookUpDomainResource("d", rd));
-        add(new RDLookUpEPResource("ep", rd));
-        add(new RDLookUpResResource("res", rd));
+        add(new LookUpDomain("d", rd));
+        add(new LookUpEndpoint("ep", rd));
+        add(new LookUpResource("res", rd));
     }
 }

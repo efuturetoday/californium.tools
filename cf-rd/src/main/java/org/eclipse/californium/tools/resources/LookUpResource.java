@@ -17,10 +17,10 @@
  */
 package org.eclipse.californium.tools.resources;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
-import java.util.TreeSet;
 
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.coap.LinkFormat;
@@ -29,53 +29,69 @@ import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 
-public class RDLookUpDomainResource extends CoapResource {
+public class LookUpResource extends CoapResource {
 
-    private RDResource rdResource = null;
+    private ResourceDirecory rdResource = null;
 
-    public RDLookUpDomainResource(String resourceIdentifier, RDResource rd) {
+    public LookUpResource(String resourceIdentifier, ResourceDirecory rd) {
         super(resourceIdentifier);
         this.rdResource = rd;
     }
 
-    @Override
+    @Override //TODO: Fetch only the Resources with Attrinbute EP on it ! To Aavoid gettins subpaths
     public void handleGET(CoapExchange exchange) {
-
         Collection<Resource> resources = rdResource.getChildren();
-        TreeSet<String> availableDomains = new TreeSet<String>();
-        String domainQuery = null;
-        Iterator<Resource> resIt = resources.iterator();
         String result = "";
+        String domainQuery = "";
+        String endpointQuery = "";
+        List<String> toRemove = new ArrayList<>();
 
         List<String> query = exchange.getRequestOptions().getUriQuery();
         for (String q : query) {
             KeyValuePair kvp = KeyValuePair.parse(q);
 
             if (LinkFormat.DOMAIN.equals(kvp.getName())) {
-                domainQuery = kvp.getValue();
+                if (kvp.isFlag()) {
+                    exchange.respond(ResponseCode.BAD_REQUEST, "Empty domain query");
+                    return;
+                } else {
+                    domainQuery = kvp.getValue();
+                    toRemove.add(q);
+                }
             }
-        }
 
-        while (resIt.hasNext()) {
-            Resource res = resIt.next();
-            if (res instanceof RDNodeResource) {
-                RDNodeResource node = (RDNodeResource) res;
-                if (domainQuery == null || domainQuery.equals(node.getDomain())) {
-                    availableDomains.add(node.getDomain());
+            if (LinkFormat.END_POINT.equals(kvp.getName())) {
+                if (kvp.isFlag()) {
+                    exchange.respond(ResponseCode.BAD_REQUEST, "Empty endpoint query");
+                    return;
+                } else {
+                    endpointQuery = kvp.getValue();
+                    toRemove.add(q);
                 }
             }
         }
 
-        if (availableDomains.isEmpty()) {
+        // clear handled queries from list
+        query.removeAll(toRemove);
+
+        // check registered resources
+        Iterator<Resource> resIt = resources.iterator();
+
+        while (resIt.hasNext()) {
+            Resource res = resIt.next();
+            if (res instanceof Endpoint) {
+                Endpoint node = (Endpoint) res;
+                if ((domainQuery.isEmpty() || domainQuery.equals(node.getDomain()))
+                        && (endpointQuery.isEmpty() || endpointQuery.equals(node.getEndpointName()))) {
+                    String link = node.toLinkFormat(query);
+                    result += (!link.isEmpty()) ? link + "," : "";
+                }
+            }
+        }
+
+        if (result.isEmpty()) {
             exchange.respond(ResponseCode.NOT_FOUND);
         } else {
-            Iterator<String> domIt = availableDomains.iterator();
-
-            while (domIt.hasNext()) {
-                String dom = domIt.next();
-                result += "</rd>;" + LinkFormat.DOMAIN + "=\"" + dom + "\",";
-            }
-
             // also remove trailing comma
             exchange.respond(ResponseCode.CONTENT, result.substring(0, result.length() - 1), MediaTypeRegistry.APPLICATION_LINK_FORMAT);
         }

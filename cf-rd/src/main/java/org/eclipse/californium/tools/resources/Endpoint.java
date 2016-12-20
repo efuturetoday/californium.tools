@@ -22,6 +22,7 @@ import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.Stack;
 import java.util.TimerTask;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -36,14 +37,13 @@ import org.eclipse.californium.core.WebLink;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.coap.LinkFormat;
-import org.eclipse.californium.core.coap.OptionSet;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 
-public class RDNodeResource extends CoapResource {
+public class Endpoint extends CoapResource {
 
-    private static final Logger LOGGER = Logger.getLogger(RDNodeResource.class.getCanonicalName());
+    private static final Logger LOGGER = Logger.getLogger(Endpoint.class.getCanonicalName());
 
     private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
             new Utils.DaemonThreadFactory("RDLifeTime#"));
@@ -56,13 +56,13 @@ public class RDNodeResource extends CoapResource {
     private String endpointType = "";
     private ScheduledFuture<?> ltExpiryFuture;
 
-    public RDNodeResource(String endpointName, String domain)
+    public Endpoint(String endpointName, String domain)
             throws IllegalArgumentException {
 
         this(endpointName, domain, endpointName);
     }
 
-    public RDNodeResource(String endpointName, String domain, String location)
+    public Endpoint(String endpointName, String domain, String location)
             throws IllegalArgumentException {
 
         super(location);
@@ -74,6 +74,13 @@ public class RDNodeResource extends CoapResource {
                     new Object[]{endpointName, endpointNameLength});
 
             throw new IllegalArgumentException("Endpoint Name > 63 bytes");
+        }
+        int domainLength = endpointName.getBytes(CoAP.UTF8_CHARSET).length;
+        if (domainLength > 63) {
+            LOGGER.log(Level.WARNING, "Domain '{0}' too long ({1} bytes)",
+                    new Object[]{endpointName, endpointNameLength});
+
+            throw new IllegalArgumentException("Domain > 63 bytes");
         }
 
         this.endpointName = endpointName;
@@ -187,7 +194,7 @@ public class RDNodeResource extends CoapResource {
      */
     @Override
     public void handlePOST(CoapExchange exchange) {
-        LOGGER.log(Level.INFO, "Updating endpoint: {0}", getContext());
+        LOGGER.log(Level.INFO, "Updating Endpoint: {0}", this.getURI());
 
         try {
             this.setParameters(exchange.advanced().getRequest());
@@ -233,7 +240,7 @@ public class RDNodeResource extends CoapResource {
      */
     @Override
     public void handleDELETE(CoapExchange exchange) {
-        delete();
+        this.delete();
         exchange.respond(ResponseCode.DELETED);
     }
 
@@ -287,20 +294,19 @@ public class RDNodeResource extends CoapResource {
     private void setContextFromRequest(Request request, String queryContext)
             throws URISyntaxException {
 
-        URI uri;
         String scheme;
         String host;
-        Integer port;
+        int port;
 
         /* This parameter sets the scheme,
            address and port at which this server is available in the form
            scheme://host:port. */
         if (queryContext != null) {
-            uri = new URI(queryContext);
+            URI queryURI = new URI(queryContext);
 
-            scheme = uri.getScheme();
-            host = uri.getHost();
-            port = uri.getPort();
+            scheme = queryURI.getScheme();
+            host = queryURI.getHost();
+            port = queryURI.getPort();
         } else {
             /* In the absence of this parameter the
                scheme of the protocol, source IP address and source port of
@@ -309,27 +315,10 @@ public class RDNodeResource extends CoapResource {
             scheme = request.getScheme();
             host = request.getSource().getHostAddress();
             port = request.getSourcePort();
-
-            // Do we have no Scheme from Request ?		
-            if (scheme == null || scheme.isEmpty()) {  // issue #38 & pr #42
-                // Assume default Scheme
-                scheme = CoAP.COAP_URI_SCHEME;
-
-                // Do we have secure CoAP enabled ?
-                OptionSet reqOptions = request.getOptions();
-                if (reqOptions.hasUriPort()
-                        && reqOptions.getUriPort() == CoAP.DEFAULT_COAP_SECURE_PORT) {
-                    scheme = CoAP.COAP_SECURE_URI_SCHEME;
-                }
-
-                // Set the Request Scheme
-                request.setScheme(scheme);
-            }
         }
 
         // Set Context from gathered Values
-        uri = new URI(scheme, null, host, port, null, null, null); // required to set port
-        // CoAP context template: coap[s?]://<host>:<port>
+        URI uri = new URI(scheme, null, host, port, null, null, null);
         this.context = uri.toString();
     }
 
@@ -338,38 +327,47 @@ public class RDNodeResource extends CoapResource {
     * humidity. If the path is /readings/temp, temp will be a subResource
     * of readings, which is a subResource of the node.
      */
-    public CoapResource addNodeResource(WebLink link) {
-        String path = link.getURI().substring(link.getURI().indexOf("/"));
+    public Resource addNodeResource(WebLink link)
+            throws URISyntaxException {
 
-        Scanner scanner = new Scanner(path);
+        String path = link.getURI().substring(link.getURI().indexOf("/"));
+        URI uri = new URI(path);
+
+        Scanner scanner = new Scanner(uri.getPath());
         scanner.useDelimiter("/");
 
         // We start with this Instace as first Parent of the Tree
         Resource parent = this;
 
-        String subPath = null;
-        CoapResource subResource = null;
+        Resource resource = null;
+        String resourceName = "";
+        boolean resourceExist;
         while (scanner.hasNext()) {
-            boolean resourceExist = false;
-            subPath = scanner.next();
+            resourceName = scanner.next();
+            
+            // Does the Resource already exists ?
+            resourceExist = false;
             for (Resource res : parent.getChildren()) {
-                if (res.getName().equals(subPath)) {
-                    subResource = (CoapResource) res;
+                if (res.getName().equals(resourceName)) {
+                    resource = res;
                     resourceExist = true;
+                    break;
                 }
             }
+            
+            // ...If not just create it as invisble Resource
             if (!resourceExist) {
-                subResource = new RDTagResource(subPath, true, this);
-                parent.add(subResource);
+                resource = new CoapResource(resourceName, false);
+                parent.add(resource);
             }
-            parent = subResource;
+            
+            parent = resource;
         }
         scanner.close();
-
-        subResource.setPath(parent.getPath());
-        subResource.setName(subPath);
-
-        return subResource;
+        
+        // At here the 'resource' holds the Endpoint Resource.
+  
+        return resource;
     }
 
     /**
@@ -381,23 +379,30 @@ public class RDNodeResource extends CoapResource {
 
         Set<WebLink> links = LinkFormat.parse(linkFormat);
 
-        for (WebLink l : links) {
+        for (WebLink link : links) {
 
-            CoapResource resource = addNodeResource(l);
+            try {
+                LOGGER.log(Level.INFO, "Trying to add Link: {0}...", link.getURI());
+                Resource resource = addNodeResource(link);
+                LOGGER.log(Level.INFO, "Resulting Link: {0}...", resource.getURI());
 
-            // clear attributes to make registration idempotent
-            for (String attribute : resource.getAttributes().getAttributeKeySet()) {
-                resource.getAttributes().clearAttribute(attribute);
-            }
-
-            // copy to resource list
-            for (String attribute : l.getAttributes().getAttributeKeySet()) {
-                for (String value : l.getAttributes().getAttributeValues(attribute)) {
-                    resource.getAttributes().addAttribute(attribute, value);
+                // clear attributes to make registration idempotent
+                for (String attribute : resource.getAttributes().getAttributeKeySet()) {
+                    resource.getAttributes().clearAttribute(attribute);
                 }
-            }
 
-            resource.getAttributes().setAttribute(LinkFormat.END_POINT, getEndpointName());
+                // copy to resource list
+                for (String attribute : link.getAttributes().getAttributeKeySet()) {
+                    for (String value : link.getAttributes().getAttributeValues(attribute)) {
+                        resource.getAttributes().addAttribute(attribute, value);
+                    }
+                }
+
+                resource.getAttributes().setAttribute(LinkFormat.END_POINT, getEndpointName());
+
+            } catch (URISyntaxException ex) {
+                LOGGER.log(Level.WARNING, "Link: {0} is invalid. Skipping...", link.getURI());
+            }
         }
 
         return true;
@@ -410,35 +415,35 @@ public class RDNodeResource extends CoapResource {
     public String toLinkFormat(List<String> query) {
 
         // Create new StringBuilder
-        StringBuilder builder = new StringBuilder();
+        StringBuilder buffer = new StringBuilder();
 
-        // Build the link format
-        buildLinkFormat(this, builder, query);
+        // Iterate Tree with a Stack(DFS)
+        Stack<Resource> stack = new Stack<>();
+        stack.push(this);
+        while (!stack.isEmpty()) {
+            Resource resource = stack.pop();
+            stack.addAll(resource.getChildren());
 
-        // Remove last delimiter
-        if (builder.length() > 0) {
-            builder.deleteCharAt(builder.length() - 1);
-        }
-
-        return builder.toString();
-    }
-
-    private void buildLinkFormat(Resource resource, StringBuilder builder, List<String> query) {
-        if (resource.getChildren().size() > 0) {
-
-            // Loop over all sub-resources
-            for (Resource res : resource.getChildren()) {
-                if (LinkFormat.matches(res, query)) {
-                    // Convert Resource to string representation
-                    builder.append("<" + getContext());
-                    builder.append(res.getURI().substring(this.getURI().length()));
-                    builder.append(">");
-                    builder.append(LinkFormat.serializeResource(res).toString().replaceFirst("<.+>", ""));
-                }
-                // Recurse
-                buildLinkFormat(res, builder, query);
+            // Is the Resource added as Endpoint Resource?
+            // If so it will have the END_POINT Attribute on it.
+            if (resource.getAttributes().containsAttribute(LinkFormat.END_POINT)
+                    && LinkFormat.matches(resource, query)) {
+                // Build LinkFormat
+                buffer.append("<")
+                        .append(this.getContext())
+                        .append(resource.getURI().substring(this.getURI().length()))
+                        .append(">")
+                        .append(LinkFormat.serializeAttributes(resource.getAttributes()))
+                        .append(",");
             }
         }
+
+        // Remove last delimiter
+        if (buffer.length() > 0) {
+            buffer.deleteCharAt(buffer.length() - 1);
+        }
+
+        return buffer.toString();
     }
 
     /*
@@ -491,9 +496,9 @@ public class RDNodeResource extends CoapResource {
 
     class ExpiryTask extends TimerTask {
 
-        RDNodeResource resource;
+        Endpoint resource;
 
-        public ExpiryTask(RDNodeResource resource) {
+        public ExpiryTask(Endpoint resource) {
             super();
             this.resource = resource;
         }

@@ -24,13 +24,13 @@ import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 
-public class RDResource extends CoapResource {
+public class ResourceDirecory extends CoapResource {
 
-    public RDResource() {
+    public ResourceDirecory() {
         this("rd");
     }
 
-    public RDResource(String resourceIdentifier) {
+    public ResourceDirecory(String resourceIdentifier) {
         super(resourceIdentifier);
         this.getAttributes().addResourceType("core.rd");
     }
@@ -135,7 +135,7 @@ public class RDResource extends CoapResource {
         }
 
         // Find Endpoint on this RD
-        RDNodeResource resource = this.getEndpoint(endpointName, domain);
+        Endpoint resource = this.getEndpoint(endpointName, domain);
 
         // Check if Endpoint is already registered with this Directory
         if (resource == null) {
@@ -147,7 +147,7 @@ public class RDResource extends CoapResource {
 			} while (getChild(randomName) != null);
              */
             try {
-                resource = new RDNodeResource(endpointName, domain);
+                resource = new Endpoint(endpointName, domain);
                 responseCode = ResponseCode.CREATED;
 
             } catch (IllegalArgumentException ex) {
@@ -167,7 +167,7 @@ public class RDResource extends CoapResource {
             return;
         }
 
-        LOGGER.log(Level.INFO, "Adding new endpoint: {0}", resource.getContext());
+        LOGGER.log(Level.INFO, "Adding new Endpoint: {0}", resource.getURI());
         this.add(resource);
         
         // inform client about the location of the new resource
@@ -177,9 +177,9 @@ public class RDResource extends CoapResource {
         exchange.respond(responseCode);
     }
 
-    private RDNodeResource getEndpoint(String endpointName, String domain) {
+    private Endpoint getEndpoint(String endpointName, String domain) {
         for (Resource child : this.getChildren()) {
-            RDNodeResource childResource = (RDNodeResource) child;
+            Endpoint childResource = (Endpoint) child;
             if (childResource.getEndpointName().equals(endpointName)
                     && childResource.getDomain().equals(domain)) {
                 return childResource;

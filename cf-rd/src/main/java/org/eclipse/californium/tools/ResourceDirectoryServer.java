@@ -24,15 +24,14 @@ import org.eclipse.californium.core.CoapServer;
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.core.network.EndpointManager;
-import org.eclipse.californium.tools.resources.RDLookUpTopResource;
-import org.eclipse.californium.tools.resources.RDResource;
-import org.eclipse.californium.tools.resources.RDTagTopResource;
+import org.eclipse.californium.tools.resources.LookUpTop;
+import org.eclipse.californium.tools.resources.ResourceDirecory;
 
 /**
  * The class ResourceDirectory provides an experimental RD as described in
  * draft-ietf-core-resource-directory-04.
  */
-public class ResourceDirectory extends CoapServer {
+public class ResourceDirectoryServer extends CoapServer {
 
     // exit codes for runtime errors
     public static final int ERR_INIT_FAILED = 1;
@@ -40,7 +39,7 @@ public class ResourceDirectory extends CoapServer {
     public static void main(String[] args) {
 
         // create server
-        CoapServer server = new ResourceDirectory();
+        CoapServer server = new ResourceDirectoryServer();
 
         // explicitly bind to each address to avoid the wildcard address reply problem
         // (default interface address instead of original destination)
@@ -52,16 +51,15 @@ public class ResourceDirectory extends CoapServer {
 
         server.start();
 
-        System.out.printf(ResourceDirectory.class.getSimpleName() + " listening on port %d.\n", server.getEndpoints().get(0).getAddress().getPort());
+        System.out.printf(ResourceDirectoryServer.class.getSimpleName() + " listening on port %d.\n", server.getEndpoints().get(0).getAddress().getPort());
     }
 
-    public ResourceDirectory() {
+    public ResourceDirectoryServer() {
 
-        RDResource rdResource = new RDResource();
+        ResourceDirecory rdResource = new ResourceDirecory();
 
         // add resources to the server
         add(rdResource);
-        add(new RDLookUpTopResource(rdResource));
-        add(new RDTagTopResource(rdResource));
+        add(new LookUpTop(rdResource));
     }
 }

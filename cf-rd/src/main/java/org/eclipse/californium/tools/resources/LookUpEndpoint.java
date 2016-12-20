@@ -17,10 +17,11 @@
  */
 package org.eclipse.californium.tools.resources;
 
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.TreeSet;
 
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.coap.LinkFormat;
@@ -29,11 +30,11 @@ import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.core.server.resources.Resource;
 
-public class RDLookUpResResource extends CoapResource {
+public class LookUpEndpoint extends CoapResource {
 
-    private RDResource rdResource = null;
+    private ResourceDirecory rdResource = null;
 
-    public RDLookUpResResource(String resourceIdentifier, RDResource rd) {
+    public LookUpEndpoint(String resourceIdentifier, ResourceDirecory rd) {
         super(resourceIdentifier);
         this.rdResource = rd;
     }
@@ -44,47 +45,42 @@ public class RDLookUpResResource extends CoapResource {
         String result = "";
         String domainQuery = "";
         String endpointQuery = "";
-        List<String> toRemove = new ArrayList<String>();
+        TreeSet<String> endpointTypeQuery = new TreeSet<String>();
 
         List<String> query = exchange.getRequestOptions().getUriQuery();
         for (String q : query) {
             KeyValuePair kvp = KeyValuePair.parse(q);
 
             if (LinkFormat.DOMAIN.equals(kvp.getName())) {
-                if (kvp.isFlag()) {
-                    exchange.respond(ResponseCode.BAD_REQUEST, "Empty domain query");
-                    return;
-                } else {
-                    domainQuery = kvp.getValue();
-                    toRemove.add(q);
-                }
+                domainQuery = kvp.getValue();
             }
 
             if (LinkFormat.END_POINT.equals(kvp.getName())) {
-                if (kvp.isFlag()) {
-                    exchange.respond(ResponseCode.BAD_REQUEST, "Empty endpoint query");
-                    return;
-                } else {
-                    endpointQuery = kvp.getValue();
-                    toRemove.add(q);
-                }
+                endpointQuery = kvp.getValue();
+            }
+
+            if (LinkFormat.END_POINT_TYPE.equals(kvp.getName())) {
+                Collections.addAll(endpointTypeQuery, kvp.getValue().split(" "));
             }
         }
 
-        // clear handled queries from list
-        query.removeAll(toRemove);
-
-        // check registered resources
         Iterator<Resource> resIt = resources.iterator();
 
         while (resIt.hasNext()) {
             Resource res = resIt.next();
-            if (res instanceof RDNodeResource) {
-                RDNodeResource node = (RDNodeResource) res;
+            if (res instanceof Endpoint) {
+                Endpoint node = (Endpoint) res;
                 if ((domainQuery.isEmpty() || domainQuery.equals(node.getDomain()))
-                        && (endpointQuery.isEmpty() || endpointQuery.equals(node.getEndpointName()))) {
-                    String link = node.toLinkFormat(query);
-                    result += (!link.isEmpty()) ? link + "," : "";
+                        && (endpointQuery.isEmpty() || endpointQuery.equals(node.getEndpointName()))
+                        && (endpointTypeQuery.isEmpty() || endpointTypeQuery.contains(node.getEndpointType()))) {
+
+                    result += "<" + node.getContext() + ">;" + LinkFormat.END_POINT + "=\"" + node.getEndpointName() + "\"";
+                    result += ";" + LinkFormat.DOMAIN + "=\"" + node.getDomain() + "\"";
+                    if (!node.getEndpointType().isEmpty()) {
+                        result += ";" + LinkFormat.RESOURCE_TYPE + "=\"" + node.getEndpointType() + "\"";
+                    }
+
+                    result += ",";
                 }
             }
         }
