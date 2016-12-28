@@ -407,7 +407,12 @@ public class Endpoint extends CoapResource {
 
         return true;
     }
-
+    
+    /*
+    private Collection<Resource> getResources() {
+        
+    }*/
+    
     /*
 	 * the following three methods are used to print the right string to put in
 	 * the payload to respond to the GET request.

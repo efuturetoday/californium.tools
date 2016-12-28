@@ -17,6 +17,8 @@
  */
 package org.eclipse.californium.tools.resources;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.logging.Level;
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.coap.LinkFormat;
@@ -34,7 +36,7 @@ public class ResourceDirecory extends CoapResource {
         super(resourceIdentifier);
         this.getAttributes().addResourceType("core.rd");
     }
-    
+
     /*
     6.3. Registration
     
@@ -112,7 +114,7 @@ public class ResourceDirecory extends CoapResource {
     
         Failure: 5.03 "Service Unavailable" or 503 "Service Unavailable".
         Service could not perform the operation.
-    */
+     */
     @Override
     public void handlePOST(CoapExchange exchange) {
 
@@ -135,7 +137,7 @@ public class ResourceDirecory extends CoapResource {
         }
 
         // Find Endpoint on this RD
-        Endpoint resource = this.getEndpoint(endpointName, domain);
+        Endpoint resource = this.getRDEndpoint(endpointName, domain);
 
         // Check if Endpoint is already registered with this Directory
         if (resource == null) {
@@ -162,14 +164,14 @@ public class ResourceDirecory extends CoapResource {
         // set parameters of resource or abort on failure
         try {
             resource.setParameters(exchange.advanced().getRequest());
-        } catch(IllegalArgumentException ex) {
+        } catch (IllegalArgumentException ex) {
             exchange.respond(ResponseCode.BAD_REQUEST, ex.getMessage());
             return;
         }
 
         LOGGER.log(Level.INFO, "Adding new Endpoint: {0}", resource.getURI());
         this.add(resource);
-        
+
         // inform client about the location of the new resource
         exchange.setLocationPath(resource.getURI());
 
@@ -177,16 +179,29 @@ public class ResourceDirecory extends CoapResource {
         exchange.respond(responseCode);
     }
 
-    private Endpoint getEndpoint(String endpointName, String domain) {
+    private Endpoint getRDEndpoint(String endpointName, String domain) {
         for (Resource child : this.getChildren()) {
-            Endpoint childResource = (Endpoint) child;
-            if (childResource.getEndpointName().equals(endpointName)
-                    && childResource.getDomain().equals(domain)) {
-                return childResource;
+            if (child instanceof Endpoint) {
+                Endpoint childResource = (Endpoint) child;
+                if (childResource.getEndpointName().equals(endpointName)
+                        && childResource.getDomain().equals(domain)) {
+
+                    return childResource;
+                }
             }
         }
 
         return null;
     }
 
+    private Collection<Endpoint> getRDEndpoints() {
+        ArrayList<Endpoint> endpoints = new ArrayList<>();
+        for (Resource child : this.getChildren()) {
+            if (child instanceof Endpoint) {
+                endpoints.add((Endpoint) child);
+            }
+        }
+
+        return endpoints;
+    }
 }

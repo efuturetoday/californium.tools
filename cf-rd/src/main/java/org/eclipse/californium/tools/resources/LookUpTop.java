@@ -28,9 +28,9 @@ public class LookUpTop extends CoapResource {
     public LookUpTop(String resourceIdentifier, ResourceDirecory rd) {
         super(resourceIdentifier);
 
-        getAttributes().addResourceType("core.rd-lookup");
-        add(new LookUpDomain("d", rd));
-        add(new LookUpEndpoint("ep", rd));
-        add(new LookUpResource("res", rd));
+        this.getAttributes().addResourceType("core.rd-lookup");
+        this.add(new LookUpDomain("d", rd));
+        this.add(new LookUpEndpoint("ep", rd));
+        this.add(new LookUpResource("res", rd));
     }
 }
